@@ -2,6 +2,7 @@
 /*==================================================================*/
 #include <Arduino.h>
 #include "ControllerMode.h"
+#include "esp_task_wdt.h"
 
 /*==================================================================*/
 // ESP-NOW P2P WiFi callback when data is sent. Unused in controller usually
@@ -29,7 +30,7 @@ void setupControllerMode()
         logMessage("ESP-NOW Setup");
 
         if (esp_now_init() != ESP_OK)
-        { 
+        {
             // Init ESP-NOW
             logErrorMessage("Unable to initialise ESP-NOW");
         }
@@ -198,7 +199,7 @@ void loop_Core1_EspNowSenderControllerTask(void *parameter) /* No IRAM */
                 xEventGroupClearBits(xEventStateChangeGroup, ESPNOW_SEND_BIT);
             }
             else
-            { 
+            {
                 // Send packet every 1000ms regardless
                 /* Example struct that can be sent */
                 // strcpy(espnowData.a, "THIS IS A CHAR");
@@ -222,7 +223,7 @@ void loop_Core1_EspNowSenderControllerTask(void *parameter) /* No IRAM */
             vTaskDelay(1); /* Yield 1ms */
         }
         else
-        {                                         
+        {
             /* No Peer is configured or disabled in config so no need to run */
             vTaskDelay(100 / portTICK_PERIOD_MS); /* Yield 100mss */
         }
@@ -287,7 +288,7 @@ void IRAM_ATTR commandHandler()
     if (cmd.control & CTRL_READY)
     {
         for (int i = 0; i < configNumSteppers; i++)
-        { 
+        {
             // Placeholder if anything needs to occur at 1khz RTOS tick relating to motors
         }
     }
@@ -297,7 +298,7 @@ void IRAM_ATTR commandHandler()
         logMessage("cmd.control = 0x%02x", cmd.control);
 
         if (cmd.control & CTRL_ENABLE)
-        { 
+        {
             // Called when Machine turned ON in LinuxCNC (Ready + Enable bits)
             logMessage("CMD: Machine ON");
             fb.udp_seq_num = 0;
@@ -316,7 +317,7 @@ void IRAM_ATTR commandHandler()
             inputHandler(); /* Run once to get current state and let ISR handle the rest */
         }
         else if ((cmd.control & CTRL_ENABLE) == 0)
-        { 
+        {
             // Called when Machine turned OFF in LinuxCNC (!Ready + Enable bits)
             logMessage("CMD: Machine OFF");
 
@@ -518,7 +519,7 @@ void IRAM_ATTR loop_Core0_CommandHandlerTask(void *parameter)
     while (runLoops)
     {
         if (machineEnabled)
-        { 
+        {
             /* Handle UDP packet watchdog first */
             if (millis() - ul_udptxrx_watchdog > 5000)
             {
@@ -562,7 +563,7 @@ void IRAM_ATTR loop_Core0_CommandHandlerTask(void *parameter)
 }
 
 /*==================================================================*/
-void loop_Core1_ServoStatsTask(void *parameter) 
+void loop_Core1_ServoStatsTask(void *parameter)
 {
     /* IRAM_ATTR not required - low speed background task */
     logMessage("loop_Core1_ServoStatsTask running...");
@@ -734,7 +735,8 @@ void IRAM_ATTR ServoMovementCmds_ISR()
 {
     if (machineEnabled)
     {
-        uint8_t moveResult = 0;
+        // int8_t moveResult = 0;
+        MoveResultCode moveResult;
         bool anyMoving = false;
 
         /*
@@ -756,7 +758,7 @@ void IRAM_ATTR ServoMovementCmds_ISR()
                 bool isRampActive = stepper[i]->isRampGeneratorActive();
 
                 if (!isRampActive && newVel > 0)
-                { 
+                {
                     // Initial move request ramping (stationary -> moving)
                     updateAxisState(i, AXIS_STATE_MOVE_REQ, 1);
                     (moveDir) ? updateAxisState(i, AXIS_STATE_MOVE_REQ_DIR, 1) : updateAxisState(i, AXIS_STATE_MOVE_REQ_DIR, 0);
@@ -765,20 +767,20 @@ void IRAM_ATTR ServoMovementCmds_ISR()
                     updateAxisState(i, AXIS_STATE_MOVE_ACCEL_REQ, 1);
                 }
                 else if (isRampActive)
-                { 
+                {
                     // rampGenerator is active so is already moving
                     newVel = newVel / axisVelScaleFactor;
                     const int32_t velDiff = (newVel - (abs(stepper[i]->getCurrentSpeedInMilliHz(true) / axisVelScaleFactor)));
-                    
+
                     if (velDiff > 10000)
-                    {                                          
+                    {
                         // accelerating > 1000mHz (1Hz)
                         stepper[i]->setLinearAcceleration(0);  // Initial linear acceleration but reduced to 100 once hits coasting speed
                         stepper[i]->setSpeedInMilliHz(newVel); // Repeated call whilst moving to ensure changes in velocity is tracked accordingly.
                         updateAxisState(i, AXIS_STATE_MOVE_ACCEL_REQ, 1);
                     }
                     else if (velDiff > -10000)
-                    {                                          
+                    {
                         // decelerating but ignore anything less than -1000mHz (-1Hz)
                         stepper[i]->setLinearAcceleration(0);  // Initial linear acceleration but reduced to 100 once hits coasting speed
                         stepper[i]->setSpeedInMilliHz(newVel); // Repeated call whilst moving to ensure changes in velocity is tracked accordingly.
@@ -815,14 +817,14 @@ void IRAM_ATTR ServoMovementCmds_ISR()
                 fb.vel[i] = stepper[i]->getCurrentSpeedInMilliHz(false);
             }
             else
-            { 
+            {
                 // Moving success
                 /*
                     See https://github.com/gin66/FastAccelStepper/blob/master/extras/doc/FastAccelStepper_API.md#stepper-position
                 */
 
                 if (stepper[i]->isRampGeneratorActive())
-                { 
+                {
                     /* Moving (fastest atomic call to the FAS lib to check if axis is moving) */
                     uint8_t rampState = stepper[i]->rampState();
 
@@ -832,13 +834,13 @@ void IRAM_ATTR ServoMovementCmds_ISR()
                     if (rampState != prevRampState[i])
                     {
                         if (rampState & RAMP_STATE_ACCELERATE)
-                        { 
+                        {
                             // Motor is accelerating
                             updateAxisState(i, (AXIS_STATE_COASTING | AXIS_STATE_DECELERATING), 0);
                             updateAxisState(i, AXIS_STATE_ACCELERATING, 1);
                         }
                         else if ((rampState & RAMP_STATE_COAST))
-                        { 
+                        {
                             // Motor is coasting/at-speed
                             updateAxisState(i, (AXIS_STATE_DECELERATING | AXIS_STATE_ACCELERATING | AXIS_STATE_MOVE_ACCEL_REQ), 0);
                             updateAxisState(i, AXIS_STATE_COASTING, 1);
@@ -846,18 +848,18 @@ void IRAM_ATTR ServoMovementCmds_ISR()
                             stepper[i]->applySpeedAcceleration();
                         }
                         else if ((rampState & RAMP_STATE_DECELERATE))
-                        { 
+                        {
                             // Motor is decelerating
                             updateAxisState(i, (AXIS_STATE_ACCELERATING | AXIS_STATE_COASTING), 0);
                             updateAxisState(i, AXIS_STATE_DECELERATING, 1);
                         }
                         if ((rampState & RAMP_DIRECTION_COUNT_UP))
-                        { 
+                        {
                             // Motor is moving forwards
                             updateAxisState(i, AXIS_STATE_MOVING_DIR, 1);
                         }
                         else if ((rampState & RAMP_DIRECTION_COUNT_DOWN))
-                        { 
+                        {
                             // Motor is moving backwards
                             updateAxisState(i, AXIS_STATE_MOVING_DIR, 0);
                         }
@@ -867,7 +869,7 @@ void IRAM_ATTR ServoMovementCmds_ISR()
                     fb.vel[i] = stepper[i]->getCurrentSpeedInMilliHz(true) * axisVelScaleFactor; // Update realtime feedback velocity using scaled value as the above. Ensuring a match with LinuxCNC is expecting for PID control aspects
                 }
                 else
-                { 
+                {
                     /* Motor stationary */
                     fb.pos[i] = stepper[i]->getCurrentPosition();
                     fb.vel[i] = 0;

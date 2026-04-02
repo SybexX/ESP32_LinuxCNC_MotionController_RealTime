@@ -18,7 +18,7 @@
 
 const String version_number = "v20240714.02";
 
-#define DRIVER_RMT 1
+// #define DRIVER_RMT 1
 #define UDP_PACKET_BUF_SIZE 70 /* Need to update this if increasing MAX_STEPPER from default of 6 so that cmd and fb structs can be serialised  */
 
 #define UDP_RECEIVE_PACKET_BIT 0b00000001
@@ -202,7 +202,7 @@ inline size_t logMessage(const char *format, ...)
         {
             return 0;
         }
-        
+
         va_start(arg, format);
         vsnprintf(buffer, len + 1, format, arg);
         va_end(arg);
